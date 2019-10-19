@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use uinput::event::Event::Controller as uinputController;
 use uinput::event::controller::Controller::{Digi as uinputDigi};
 use uinput::event::controller::Digi::{Touch as uinputTouch, Pen as uinputPen, Stylus as uinputStylus, Stylus2 as uinputStylus2};
@@ -52,22 +53,23 @@ fn main() {
 
 	let endpoint = detach_kernel(&config_descriptor, &mut handler)[0];
 
-	let mut _system_device = uinput::default().unwrap()
+	let mut system_device = uinput::default().unwrap()
 		.name("Tablet Monitor Pen").unwrap()
 		.event(uinputController(uinputDigi(uinputTouch))).unwrap()
 		.event(uinputController(uinputDigi(uinputPen))).unwrap()
 		.event(uinputController(uinputDigi(uinputStylus))).unwrap()
 		.event(uinputController(uinputDigi(uinputStylus2))).unwrap()
 		.event(uinputPositionX).unwrap()
+		.min(0).max(86967)
 		.event(uinputPositionY).unwrap()
+		.min(0).max(47746)
 		.event(uinputPressure).unwrap()
+		.min(0).max(8191)
 		.event(uinputTiltX).unwrap()
+		.min(-127).max(127)
 		.event(uinputTiltY).unwrap()
+		.min(-127).max(127)
 		.create().unwrap();
-
-	/*system_device.send(uinputPositionX, 500);
-	system_device.send(uinputPositionY, 500);
-	system_device.synchronize().unwrap();*/
 
 	let mut buffer: [u8;12] = [0;12];
 
@@ -84,6 +86,33 @@ fn main() {
 		let position = parse_pen_position(buffer);
 		let pressure = parse_pen_pressure(buffer);
 		let tilt = parse_pen_tilt(buffer);
+
+		system_device.send(uinputPositionX, position.0.try_into().unwrap()).unwrap();
+		system_device.send(uinputPositionY, position.1.try_into().unwrap()).unwrap();
+		system_device.send(uinputPressure, pressure.try_into().unwrap()).unwrap();
+		
+		if pen.1 { 
+			system_device.send(uinputTouch, 1).unwrap() 
+		} else { 
+			system_device.send(uinputTouch, 0).unwrap() 
+		};
+
+		system_device.send(uinputTiltX, tilt.0.into()).unwrap();
+		system_device.send(uinputTiltY, tilt.1.into()).unwrap();
+
+		if pen.2 { 
+			system_device.send(uinputStylus, 1).unwrap() 
+		} else { 
+			system_device.send(uinputStylus, 0).unwrap() 
+		};
+
+		if pen.3 { 
+			system_device.send(uinputStylus2, 1).unwrap() 
+		} else { 
+			system_device.send(uinputStylus2, 0).unwrap() 
+		};
+
+		system_device.synchronize().unwrap();
 
 		println!("Parsed pen: X:{:5} Y:{:5} Pressure:{:4} Tilt X:{:4} Tilt Y:{:4} Hover:{:5} Touch:{:5} Buttonbar:{:5} Scrollbar:{:5}", 
 			position.0, position.1, pressure, tilt.0, tilt.1, pen.0, pen.1, pen.2, pen.3);
