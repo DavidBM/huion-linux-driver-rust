@@ -1,0 +1,15 @@
+[package]
+name = "huion-drivers-wayland-rs"
+version = "0.1.0"
+authors = ["David Bonet Montes <webbonet@gmail.com>"]
+edition = "2018"
+license = "LGPL-3.0-or-later"
+description = "Linux Driver for Huion graphic display tablets."
+# documentation = "https://github.com/DavidBM/slacktus/blob/master/README.md"
+# homepage = "https://github.com/DavidBM/slacktus"
+# repository = "https://github.com/DavidBM/slacktus"
+# readme="README.md"
+
+[dependencies]
+rusb = "0.4"
+uinput = "0.1.3"
