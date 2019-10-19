@@ -1,3 +1,9 @@
+use uinput::event::Event::Controller as uinputController;
+use uinput::event::controller::Controller::{Digi as uinputDigi};
+use uinput::event::controller::Digi::{Touch as uinputTouch, Pen as uinputPen, Stylus as uinputStylus, Stylus2 as uinputStylus2};
+use uinput::event::absolute::Position::{X as uinputPositionX, Y as uinputPositionY};
+use uinput::event::absolute::Digi::{Pressure as uinputPressure, TiltX as uinputTiltX, TiltY as uinputTiltY};
+
 fn main() {
 	let context = rusb::Context::new().unwrap();
 
@@ -46,9 +52,22 @@ fn main() {
 
 	let endpoint = detach_kernel(&config_descriptor, &mut handler)[0];
 
-	let system_device = uinput::default().unwrap()
+	let mut _system_device = uinput::default().unwrap()
 		.name("Tablet Monitor Pen").unwrap()
+		.event(uinputController(uinputDigi(uinputTouch))).unwrap()
+		.event(uinputController(uinputDigi(uinputPen))).unwrap()
+		.event(uinputController(uinputDigi(uinputStylus))).unwrap()
+		.event(uinputController(uinputDigi(uinputStylus2))).unwrap()
+		.event(uinputPositionX).unwrap()
+		.event(uinputPositionY).unwrap()
+		.event(uinputPressure).unwrap()
+		.event(uinputTiltX).unwrap()
+		.event(uinputTiltY).unwrap()
 		.create().unwrap();
+
+	/*system_device.send(uinputPositionX, 500);
+	system_device.send(uinputPositionY, 500);
+	system_device.synchronize().unwrap();*/
 
 	let mut buffer: [u8;12] = [0;12];
 

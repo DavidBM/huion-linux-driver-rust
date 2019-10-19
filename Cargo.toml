@@ -6,8 +6,8 @@ edition = "2018"
 license = "LGPL-3.0-or-later"
 description = "Linux Driver for Huion graphic display tablets."
 # documentation = "https://github.com/DavidBM/slacktus/blob/master/README.md"
-# homepage = "https://github.com/DavidBM/slacktus"
-# repository = "https://github.com/DavidBM/slacktus"
+homepage = "https://github.com/DavidBM/huion-linux-driver-rust"
+repository = "git@github.com:DavidBM/huion-linux-driver-rust.git"
 # readme="README.md"
 
 [dependencies]
