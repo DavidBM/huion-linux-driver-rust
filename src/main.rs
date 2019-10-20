@@ -183,8 +183,8 @@ fn create_virtual_input_device(_usb_device: &rusb::Device, device_desc: &rusb::D
 	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_STYLUS), None).unwrap();
 	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), None).unwrap();
 
-	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_X), Some(&create_absinfo(86967, 3, 5080))).unwrap();
-	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_Y), Some(&create_absinfo(47746, 6, 5080))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_X), Some(&create_absinfo(86967, 3, 195))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_Y), Some(&create_absinfo(47746, 6, 201))).unwrap();
 	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_PRESSURE), Some(&create_absinfo(8191, 0, 0))).unwrap();
 	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_TILT_X), Some(&create_absinfo(127, -127, 0))).unwrap();
 	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_TILT_Y), Some(&create_absinfo(127, -127, 0))).unwrap();
