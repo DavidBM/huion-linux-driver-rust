@@ -1,9 +1,17 @@
-use std::convert::TryInto;
-use uinput::event::Event::Controller as uinputController;
-use uinput::event::controller::Controller::{Digi as uinputDigi};
-use uinput::event::controller::Digi::{Touch as uinputTouch, Pen as uinputPen, Stylus as uinputStylus, Stylus2 as uinputStylus2};
-use uinput::event::absolute::Position::{X as uinputPositionX, Y as uinputPositionY};
-use uinput::event::absolute::Digi::{Pressure as uinputPressure, TiltX as uinputTiltX, TiltY as uinputTiltY};
+use std::os::unix::io::AsRawFd;
+use std::os::raw::c_int;
+use std::path::PathBuf;
+
+#[derive(Debug)]
+struct RawFd {
+	fd: c_int
+}
+
+impl AsRawFd for RawFd {
+	fn as_raw_fd(&self) -> c_int {
+		self.fd
+	}
+}
 
 fn main() {
 	let context = rusb::Context::new().unwrap();
@@ -53,23 +61,24 @@ fn main() {
 
 	let endpoint = detach_kernel(&config_descriptor, &mut handler)[0];
 
-	let mut system_device = uinput::default().unwrap()
-		.name("Tablet Monitor Pen").unwrap()
-		.event(uinputController(uinputDigi(uinputTouch))).unwrap()
-		.event(uinputController(uinputDigi(uinputPen))).unwrap()
-		.event(uinputController(uinputDigi(uinputStylus))).unwrap()
-		.event(uinputController(uinputDigi(uinputStylus2))).unwrap()
-		.event(uinputPositionX).unwrap()
-		.min(0).max(86967)
-		.event(uinputPositionY).unwrap()
-		.min(0).max(47746)
-		.event(uinputPressure).unwrap()
-		.min(0).max(8191)
-		.event(uinputTiltX).unwrap()
-		.min(-127).max(127)
-		.event(uinputTiltY).unwrap()
-		.min(-127).max(127)
-		.create().unwrap();
+	let device_version = device_desc.device_version();
+	let device_version_binary = (u16::from(device_version.major()) << 8) + (u16::from(device_version.minor()) << 4) + u16::from(device_version.sub_minor());
+	let devnode_path = get_devnode_udev();
+
+	let devnode_filedescriptor: c_int = nix::fcntl::open(&devnode_path, nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_NONBLOCK, nix::sys::stat::Mode::empty()).unwrap();
+
+	let devnode_filedescriptor = RawFd { fd: devnode_filedescriptor };
+
+	let uinput_handler = input_linux::uinput::UInputHandle::new(&devnode_filedescriptor);
+
+	let tablet_name = format!("{} {:?}", "Tablet Monitor Touch Display", std::time::Instant::now());
+
+	uinput_handler.create(&input_linux::InputId {
+		bustype: 0x03,
+		vendor: device_desc.vendor_id(),
+		product: device_desc.product_id(),
+		version: device_version_binary,
+	}, &(*tablet_name).as_bytes(), 0, &[]).unwrap();
 
 	let mut buffer: [u8;12] = [0;12];
 
@@ -77,6 +86,7 @@ fn main() {
 		let result = handler.read_bulk(endpoint, &mut buffer, std::time::Duration::new(5,0));
 
 		if result.is_err() {
+			println!("{:?}", result);
 			continue;
 		}
 		
@@ -87,7 +97,7 @@ fn main() {
 		let pressure = parse_pen_pressure(buffer);
 		let tilt = parse_pen_tilt(buffer);
 
-		system_device.send(uinputPositionX, position.0.try_into().unwrap()).unwrap();
+		/*system_device.send(uinputPositionX, position.0.try_into().unwrap()).unwrap();
 		system_device.send(uinputPositionY, position.1.try_into().unwrap()).unwrap();
 		system_device.send(uinputPressure, pressure.try_into().unwrap()).unwrap();
 		
@@ -112,7 +122,7 @@ fn main() {
 			system_device.send(uinputStylus2, 0).unwrap() 
 		};
 
-		system_device.synchronize().unwrap();
+		system_device.synchronize().unwrap();*/
 
 		println!("Parsed pen: X:{:5} Y:{:5} Pressure:{:4} Tilt X:{:4} Tilt Y:{:4} Hover:{:5} Touch:{:5} Buttonbar:{:5} Scrollbar:{:5}", 
 			position.0, position.1, pressure, tilt.0, tilt.1, pen.0, pen.1, pen.2, pen.3);
@@ -204,4 +214,17 @@ fn get_a_endpoint(interface: &rusb::Interface) -> u8 {
 	let endpoint_descriptor = &endpoint_descriptors[0];
 
 	endpoint_descriptor.address()
+}
+
+fn get_devnode_udev() -> PathBuf {
+	let     context    = libudev::Context::new().unwrap();
+	let mut enumerator = libudev::Enumerator::new(&context).unwrap();
+
+	enumerator.match_subsystem("misc").unwrap();
+	enumerator.match_sysname("uinput").unwrap();
+
+	let device = enumerator.scan_devices().unwrap()
+		.next().unwrap();
+
+	device.devnode().unwrap().to_path_buf()
 }
