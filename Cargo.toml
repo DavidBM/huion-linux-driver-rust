@@ -12,7 +12,4 @@ repository = "git@github.com:DavidBM/huion-linux-driver-rust.git"
 
 [dependencies]
 rusb = "0.4"
-uinput = "0.1.3"
-input-linux = "0.0.1"
-nix = "0.15.0"
-libudev = "0.2.0"
+evdev-rs = "0.2.0"

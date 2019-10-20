@@ -1,17 +1,4 @@
-use std::os::unix::io::AsRawFd;
-use std::os::raw::c_int;
-use std::path::PathBuf;
-
-#[derive(Debug)]
-struct RawFd {
-	fd: c_int
-}
-
-impl AsRawFd for RawFd {
-	fn as_raw_fd(&self) -> c_int {
-		self.fd
-	}
-}
+use std::convert::TryInto;
 
 fn main() {
 	let context = rusb::Context::new().unwrap();
@@ -61,24 +48,7 @@ fn main() {
 
 	let endpoint = detach_kernel(&config_descriptor, &mut handler)[0];
 
-	let device_version = device_desc.device_version();
-	let device_version_binary = (u16::from(device_version.major()) << 8) + (u16::from(device_version.minor()) << 4) + u16::from(device_version.sub_minor());
-	let devnode_path = get_devnode_udev();
-
-	let devnode_filedescriptor: c_int = nix::fcntl::open(&devnode_path, nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_NONBLOCK, nix::sys::stat::Mode::empty()).unwrap();
-
-	let devnode_filedescriptor = RawFd { fd: devnode_filedescriptor };
-
-	let uinput_handler = input_linux::uinput::UInputHandle::new(&devnode_filedescriptor);
-
-	let tablet_name = format!("{} {:?}", "Tablet Monitor Touch Display", std::time::Instant::now());
-
-	uinput_handler.create(&input_linux::InputId {
-		bustype: 0x03,
-		vendor: device_desc.vendor_id(),
-		product: device_desc.product_id(),
-		version: device_version_binary,
-	}, &(*tablet_name).as_bytes(), 0, &[]).unwrap();
+	let virtual_input_device = create_virtual_input_device(&device, &device_desc);
 
 	let mut buffer: [u8;12] = [0;12];
 
@@ -89,40 +59,13 @@ fn main() {
 			println!("{:?}", result);
 			continue;
 		}
-		
-		//println!("{:?}", buffer);
 
 		let pen = parse_usb_buffer_pen(buffer);
 		let position = parse_pen_position(buffer);
 		let pressure = parse_pen_pressure(buffer);
 		let tilt = parse_pen_tilt(buffer);
 
-		/*system_device.send(uinputPositionX, position.0.try_into().unwrap()).unwrap();
-		system_device.send(uinputPositionY, position.1.try_into().unwrap()).unwrap();
-		system_device.send(uinputPressure, pressure.try_into().unwrap()).unwrap();
-		
-		if pen.1 { 
-			system_device.send(uinputTouch, 1).unwrap() 
-		} else { 
-			system_device.send(uinputTouch, 0).unwrap() 
-		};
-
-		system_device.send(uinputTiltX, tilt.0.into()).unwrap();
-		system_device.send(uinputTiltY, tilt.1.into()).unwrap();
-
-		if pen.2 { 
-			system_device.send(uinputStylus, 1).unwrap() 
-		} else { 
-			system_device.send(uinputStylus, 0).unwrap() 
-		};
-
-		if pen.3 { 
-			system_device.send(uinputStylus2, 1).unwrap() 
-		} else { 
-			system_device.send(uinputStylus2, 0).unwrap() 
-		};
-
-		system_device.synchronize().unwrap();*/
+		send_events_to_virtual_device(&virtual_input_device, pen, position, pressure, tilt);
 
 		println!("Parsed pen: X:{:5} Y:{:5} Pressure:{:4} Tilt X:{:4} Tilt Y:{:4} Hover:{:5} Touch:{:5} Buttonbar:{:5} Scrollbar:{:5}", 
 			position.0, position.1, pressure, tilt.0, tilt.1, pen.0, pen.1, pen.2, pen.3);
@@ -216,15 +159,89 @@ fn get_a_endpoint(interface: &rusb::Interface) -> u8 {
 	endpoint_descriptor.address()
 }
 
-fn get_devnode_udev() -> PathBuf {
-	let     context    = libudev::Context::new().unwrap();
-	let mut enumerator = libudev::Enumerator::new(&context).unwrap();
+fn create_virtual_input_device(_usb_device: &rusb::Device, device_desc: &rusb::DeviceDescriptor) -> evdev_rs::uinput::UInputDevice {
+	use evdev_rs::enums::EventCode;
+	use evdev_rs::enums::EV_KEY;
+	use evdev_rs::enums::EV_ABS;
+	let device = evdev_rs::Device::new().unwrap();
 
-	enumerator.match_subsystem("misc").unwrap();
-	enumerator.match_sysname("uinput").unwrap();
+	let device_version = device_desc.device_version();
+	let device_version = (u16::from(device_version.major()) << 8) + (u16::from(device_version.minor()) << 4) + u16::from(device_version.sub_minor());
 
-	let device = enumerator.scan_devices().unwrap()
-		.next().unwrap();
+	let now = std::time::SystemTime::now();
+	let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap();
 
-	device.devnode().unwrap().to_path_buf()
+	device.set_name(&*format!("{} {:?}", "Tablet Monitor Touch Display", since_epoch.as_millis()));
+	device.set_phys("HDMI1");
+	device.set_bustype(0x3);
+	device.set_vendor_id(device_desc.vendor_id().try_into().unwrap());
+	device.set_product_id(device_desc.product_id().try_into().unwrap());
+	device.set_product_id(device_version.try_into().unwrap());
+
+	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_TOUCH), None).unwrap();
+	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_TOOL_PEN), None).unwrap();
+	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_STYLUS), None).unwrap();
+	device.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), None).unwrap();
+
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_X), Some(&create_absinfo(86967, 3, 5080))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_Y), Some(&create_absinfo(47746, 6, 5080))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_PRESSURE), Some(&create_absinfo(8191, 0, 0))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_TILT_X), Some(&create_absinfo(127, -127, 0))).unwrap();
+	device.enable_event_code(&EventCode::EV_ABS(EV_ABS::ABS_TILT_Y), Some(&create_absinfo(127, -127, 0))).unwrap();
+
+	evdev_rs::UInputDevice::create_from_device(&device).unwrap()
+}
+
+fn create_absinfo(maximum: i32, minimum: i32, resolution: i32) -> evdev_rs::AbsInfo {
+	evdev_rs::AbsInfo {
+		value: 0,
+		minimum,
+		maximum,
+		fuzz: 0,
+		flat: 0,
+		resolution,
+	}
+}
+
+fn send_events_to_virtual_device(
+	device: &evdev_rs::uinput::UInputDevice,
+	pen: (bool, bool, bool, bool), 
+	position: (u32, u32), 
+	pressure: u16, 
+	tilts: (i8, i8)
+) {
+
+	use evdev_rs::InputEvent;
+	use evdev_rs::TimeVal;
+	use evdev_rs::enums::EventCode;
+	use evdev_rs::enums::EV_KEY;
+	use evdev_rs::enums::EV_ABS;
+	use evdev_rs::enums::EV_SYN;
+
+	let now = std::time::SystemTime::now();
+	let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap();
+
+	let timeval = &TimeVal {
+		tv_sec: since_epoch.as_secs() as i64,
+		tv_usec: i64::from(since_epoch.subsec_micros()),
+	};
+
+	let mut events: Vec<InputEvent> = vec!();
+
+	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_TOUCH), if pen.1 { 1 } else { 0 }));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS), if pen.2 { 1 } else { 0 }));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), if pen.3 { 1 } else { 0 }));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), if pen.3 { 1 } else { 0 }));
+
+	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_X), position.0.try_into().unwrap()));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_Y), position.1.try_into().unwrap()));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_PRESSURE), pressure.try_into().unwrap()));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_TILT_X), tilts.0.into()));
+	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_TILT_Y), tilts.1.into()));
+
+	events.push(InputEvent::new(&timeval, &EventCode::EV_SYN(EV_SYN::SYN_REPORT), 0));
+
+	for event in events {
+		device.write_event(&event).unwrap();
+	}
 }
