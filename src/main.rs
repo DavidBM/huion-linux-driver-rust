@@ -186,7 +186,6 @@ fn create_virtual_input_device(_usb_device: &rusb::Device, device_desc: &rusb::D
 	let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap();
 
 	device.set_name(&*format!("{} {:?}", "Tablet Monitor Touch Display", since_epoch.as_millis()));
-	device.set_phys("HDMI1");
 	device.set_bustype(0x3);
 	device.set_vendor_id(device_desc.vendor_id().try_into().unwrap());
 	device.set_product_id(device_desc.product_id().try_into().unwrap());
