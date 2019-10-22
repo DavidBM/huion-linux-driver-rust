@@ -5,8 +5,7 @@ fn main() {
 
 	let devices_iterator = context.devices().unwrap();
 
-	let devices = devices_iterator.iter()
-	.filter(|device| {
+	let devices = devices_iterator.iter().filter(|device| {
 		let device_descriptor = device.device_descriptor().unwrap();
 		device_descriptor.vendor_id() == 0x256c && device_descriptor.product_id() == 0x006e
 	});
@@ -19,11 +18,13 @@ fn main() {
 
 	let device_desc = device.device_descriptor().unwrap();
 
-	println!("Bus {:03} Device {:03} ID {:04x}:{:04x}",
+	println!(
+		"Bus {:03} Device {:03} ID {:04x}:{:04x}",
 		device.bus_number(),
 		device.address(),
 		device_desc.vendor_id(),
-		device_desc.product_id());
+		device_desc.product_id()
+	);
 
 	let handler = device.open();
 
@@ -43,19 +44,33 @@ fn main() {
 	println!("Interfaces count: {:?}", config_descriptor.interfaces().count());
 
 	println!("Active config: {:?}", handler.active_configuration());
-	
+
 	println!("Set active config: {:?}", handler.set_active_configuration(1));
 
 	let endpoint = detach_kernel(&config_descriptor, &mut handler)[0];
 
 	let virtual_input_device = create_virtual_input_device(&device, &device_desc);
 
-	let mut buffer: [u8;12] = [0;12];
+	let mut buffer: [u8; 12] = [0; 12];
+
+	let ten_millis = std::time::Duration::from_secs(1);
+	std::thread::sleep(ten_millis);
+
+	println!("All ready. Listening for USB events...");
 
 	loop {
-		let result = handler.read_bulk(endpoint, &mut buffer, std::time::Duration::new(5,0));
+		let result = handler.read_bulk(endpoint, &mut buffer, std::time::Duration::new(10, 0));
 
 		if result.is_err() {
+			if let Err(rusb::Error::Timeout) = result {
+				continue;
+			}
+
+			if let Err(rusb::Error::NoDevice) = result {
+				println!("USB disconnected. Closing driver.");
+				break;
+			}
+
 			println!("{:?}", result);
 			continue;
 		}
@@ -67,79 +82,78 @@ fn main() {
 
 		send_events_to_virtual_device(&virtual_input_device, pen, position, pressure, tilt);
 
-		println!("Parsed pen: X:{:5} Y:{:5} Pressure:{:4} Tilt X:{:4} Tilt Y:{:4} Hover:{:5} Touch:{:5} Buttonbar:{:5} Scrollbar:{:5}", 
-			position.0, position.1, pressure, tilt.0, tilt.1, pen.0, pen.1, pen.2, pen.3);
+		/*println!("Parsed pen: X:{:5} Y:{:5} Pressure:{:4} Tilt X:{:4} Tilt Y:{:4} Hover:{:5} Touch:{:5} Buttonbar:{:5} Scrollbar:{:5}",
+		position.0, position.1, pressure, tilt.0, tilt.1, pen.0, pen.1, pen.2, pen.3);*/
 	}
 }
 
-fn parse_pen_tilt(data: [u8;12]) -> (i8, i8) {
-
+fn parse_pen_tilt(data: [u8; 12]) -> (i8, i8) {
 	//Unsafe code because the values must be signed numbers (seems that they can be negative).
 	let tilt_x = unsafe { std::mem::transmute::<u8, i8>(data[10]) };
 	let tilt_y = unsafe { std::mem::transmute::<u8, i8>(data[11]) };
 
-	let tilt_y = - tilt_y;
+	let tilt_y = -tilt_y;
 
 	//println!("{:6} {:6}", tilt_x, tilt_y);
-	
+
 	(tilt_x, tilt_y)
 }
 
-fn parse_pen_position(data: [u8;12]) -> (u32, u32) {
-
+fn parse_pen_position(data: [u8; 12]) -> (u32, u32) {
 	let x = (u32::from(data[8]) << 16) + (u32::from(data[3]) << 8) + (u32::from(data[2]));
 	let y = (u32::from(data[9]) << 16) + (u32::from(data[5]) << 8) + (u32::from(data[4]));
 
 	//println!("{:#32b} {:#32b}", x, y);
-	
+
 	(x, y)
 }
 
-fn parse_pen_pressure(data: [u8;12]) -> u16 {
-
+fn parse_pen_pressure(data: [u8; 12]) -> u16 {
 	//println!("{:#16b}", (u16::from(data[7]) << 8) + (u16::from(data[6])));
-	
+
 	(u16::from(data[7]) << 8) + (u16::from(data[6]))
 }
 
-fn parse_usb_buffer_pen(data: [u8;12]) -> (bool, bool, bool, bool) {
+fn parse_usb_buffer_pen(data: [u8; 12]) -> (bool, bool, bool, bool) {
 	//println!("Pen event: {:#b}", data[1]);
 
 	let pen_buttons = data[1];
 
-	let is_hover 		= (pen_buttons & 0b1000_0000) == 0b1000_0000;
-	let is_touch 		= (pen_buttons & 0b0000_0001) == 0b0000_0001;
-	let is_buttonbar 	= (pen_buttons & 0b0000_0010) == 0b0000_0010;
-	let is_scrollbar 	= (pen_buttons & 0b0000_0100) == 0b0000_0100;
+	let is_hover = (pen_buttons & 0b1000_0000) == 0b1000_0000;
+	let is_touch = (pen_buttons & 0b0000_0001) == 0b0000_0001;
+	let is_buttonbar = (pen_buttons & 0b0000_0010) == 0b0000_0010;
+	let is_scrollbar = (pen_buttons & 0b0000_0100) == 0b0000_0100;
 
 	(is_hover, is_touch, is_buttonbar, is_scrollbar)
 }
 
 fn detach_kernel(config_descriptor: &rusb::ConfigDescriptor, handler: &mut rusb::DeviceHandle) -> Vec<u8> {
+	//println!("\nFinding interfaces...");
 
-	println!("\nFinding interfaces...");
-
-	let mut available_endpoints: Vec<u8> = vec!();
+	let mut available_endpoints: Vec<u8> = vec![];
 
 	for interface in config_descriptor.interfaces() {
 		let interface_number = interface.number();
 
 		available_endpoints.push(get_a_endpoint(&interface));
 
-		println!("\tFound interface: {:?}", interface.number());
+		//println!("\tFound interface: {:?}", interface.number());
 
-		let is_kernel_active = handler.kernel_driver_active(interface.number())
-		.unwrap_or_else(|_| { panic!(format!("Error checking if kernel driver is active interface: {}", interface_number).to_owned()) });
+		let is_kernel_active = handler
+			.kernel_driver_active(interface.number())
+			.unwrap_or_else(|_| panic!(format!("Error checking if kernel driver is active interface: {}", interface_number).to_owned()));
 
-		if is_kernel_active { 
-			handler.detach_kernel_driver(interface.number())
-			.unwrap_or_else(|_| { panic!(format!("Error detaching kernel driver: {}", interface_number).to_owned()) });
+		if is_kernel_active {
+			handler
+				.detach_kernel_driver(interface.number())
+				.unwrap_or_else(|_| panic!(format!("Error detaching kernel driver: {}", interface_number).to_owned()));
 		}
 
-		handler.claim_interface(interface.number())
-		.unwrap_or_else(|_| { panic!(format!("Error claiming interface: {}", interface_number).to_owned()) });
+		handler
+			.claim_interface(interface.number())
+			.unwrap_or_else(|_| panic!(format!("Error claiming interface: {}", interface_number).to_owned()));
 
-		println!("\tClaimed interface {}", interface_number);
+		//println!("\tClaimed interface {}", interface_number);
 	}
 
 	println!();
@@ -161,8 +175,8 @@ fn get_a_endpoint(interface: &rusb::Interface) -> u8 {
 
 fn create_virtual_input_device(_usb_device: &rusb::Device, device_desc: &rusb::DeviceDescriptor) -> evdev_rs::uinput::UInputDevice {
 	use evdev_rs::enums::EventCode;
-	use evdev_rs::enums::EV_KEY;
 	use evdev_rs::enums::EV_ABS;
+	use evdev_rs::enums::EV_KEY;
 	let device = evdev_rs::Device::new().unwrap();
 
 	let device_version = device_desc.device_version();
@@ -203,20 +217,13 @@ fn create_absinfo(maximum: i32, minimum: i32, resolution: i32) -> evdev_rs::AbsI
 	}
 }
 
-fn send_events_to_virtual_device(
-	device: &evdev_rs::uinput::UInputDevice,
-	pen: (bool, bool, bool, bool), 
-	position: (u32, u32), 
-	pressure: u16, 
-	tilts: (i8, i8)
-) {
-
+fn send_events_to_virtual_device(device: &evdev_rs::uinput::UInputDevice, pen: (bool, bool, bool, bool), position: (u32, u32), pressure: u16, tilts: (i8, i8)) {
+	use evdev_rs::enums::EventCode;
+	use evdev_rs::enums::EV_ABS;
+	use evdev_rs::enums::EV_KEY;
+	use evdev_rs::enums::EV_SYN;
 	use evdev_rs::InputEvent;
 	use evdev_rs::TimeVal;
-	use evdev_rs::enums::EventCode;
-	use evdev_rs::enums::EV_KEY;
-	use evdev_rs::enums::EV_ABS;
-	use evdev_rs::enums::EV_SYN;
 
 	let now = std::time::SystemTime::now();
 	let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap();
@@ -226,11 +233,10 @@ fn send_events_to_virtual_device(
 		tv_usec: i64::from(since_epoch.subsec_micros()),
 	};
 
-	let mut events: Vec<InputEvent> = vec!();
+	let mut events: Vec<InputEvent> = vec![];
 
 	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_TOUCH), if pen.1 { 1 } else { 0 }));
 	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS), if pen.2 { 1 } else { 0 }));
-	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), if pen.3 { 1 } else { 0 }));
 	events.push(InputEvent::new(&timeval, &EventCode::EV_KEY(EV_KEY::BTN_STYLUS2), if pen.3 { 1 } else { 0 }));
 
 	events.push(InputEvent::new(&timeval, &EventCode::EV_ABS(EV_ABS::ABS_X), position.0.try_into().unwrap()));
