@@ -5,10 +5,7 @@ fn main() {
 
 	let devices_iterator = context.devices().unwrap();
 
-	let devices = devices_iterator.iter().filter(|device| {
-		let device_descriptor = device.device_descriptor().unwrap();
-		device_descriptor.vendor_id() == 0x256c && device_descriptor.product_id() == 0x006e
-	});
+	let devices = devices_iterator.iter().filter(is_device_huion_tablet);
 
 	let mut matched_devices: Vec<rusb::Device> = devices.collect();
 
@@ -16,6 +13,15 @@ fn main() {
 
 	let device = device.expect("No graphic tablet connected found. Check the USB.");
 
+	device_setup(device);
+}
+
+fn is_device_huion_tablet(device: &rusb::Device) -> bool {
+	let device_descriptor = device.device_descriptor().unwrap();
+	device_descriptor.vendor_id() == 0x256c && device_descriptor.product_id() == 0x006e
+}
+
+fn device_setup(device: rusb::Device) {
 	let device_desc = device.device_descriptor().unwrap();
 
 	println!(
@@ -51,12 +57,16 @@ fn main() {
 
 	let virtual_input_device = create_virtual_input_device(&device, &device_desc);
 
-	let mut buffer: [u8; 12] = [0; 12];
-
 	let ten_millis = std::time::Duration::from_secs(1);
 	std::thread::sleep(ten_millis);
 
 	println!("All ready. Listening for USB events...");
+
+	usb_event_loop(handler, endpoint, virtual_input_device);
+}
+
+fn usb_event_loop(handler: rusb::DeviceHandle, endpoint: u8, virtual_input_device: evdev_rs::uinput::UInputDevice){
+	let mut buffer: [u8; 12] = [0; 12];
 
 	loop {
 		let result = handler.read_bulk(endpoint, &mut buffer, std::time::Duration::new(10, 0));
@@ -68,7 +78,7 @@ fn main() {
 
 			if let Err(rusb::Error::NoDevice) = result {
 				println!("USB disconnected. Closing driver.");
-				break;
+				return;
 			}
 
 			println!("{:?}", result);
