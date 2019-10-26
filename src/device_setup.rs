@@ -55,12 +55,12 @@ fn device_setup<T: rusb::UsbContext>(device: rusb::Device<T>, sn: String) -> rus
 	let device_desc = device.device_descriptor()?;
 
 	println!(
-		"Bus {:03} Device {:03} ID {:04x}:{:04x} Serial number: {}",
+		"{} - Bus {:03} Device {:03} ID {:04x}:{:04x}",
+		sn,
 		device.bus_number(),
 		device.address(),
 		device_desc.vendor_id(),
 		device_desc.product_id(),
-		sn,
 	);
 
 	let mut handler = device.open()?;
@@ -71,13 +71,24 @@ fn device_setup<T: rusb::UsbContext>(device: rusb::Device<T>, sn: String) -> rus
 	println!("{} - Active config descriptor number: {:?}", sn, config_descriptor.number());
 	//println!("Config descriptor 0: {:?}", device.config_descriptor(0)); //Why 0? It should be one as active_config_descriptor says!!!???
 
-	println!("{} - Interfaces count: {:?}", sn, config_descriptor.interfaces().count());
+	//println!("{} - Interfaces count: {:?}", sn, config_descriptor.interfaces().count());
 
-	println!("{} - Active config: {:?}", sn, handler.active_configuration());
+	let active_config = handler.active_configuration();
 
-	println!("{} - Set active config: {:?}", sn, handler.set_active_configuration(1));
+	println!("{} - Current active config: {:?}", sn, active_config);
 
-	let endpoint = detach_kernel(&config_descriptor, &mut handler, &sn)[0];
+	if let Ok(1) = active_config {
+		std::thread::sleep(std::time::Duration::new(1, 0));
+		println!("{} - Set active config to 1: {:?}", sn, handler.set_active_configuration(1));
+	}
+
+	let endpoint = match claiming_interfaces(&config_descriptor, &mut handler, &sn).get(0) {
+		Some(endpoint) => *endpoint,
+		None => {
+			println!("{} - No endpoint found for the device", sn);
+			return Err(rusb::Error::Access);
+		}
+	};
 
 	let virtual_input_device = create_virtual_input_device(&device, &device_desc, &sn);
 
@@ -163,7 +174,7 @@ fn parse_usb_buffer_pen(data: [u8; 12]) -> (bool, bool, bool, bool) {
 	(is_hover, is_touch, is_buttonbar, is_scrollbar)
 }
 
-fn detach_kernel<T: rusb::UsbContext>(config_descriptor: &rusb::ConfigDescriptor, handler: &mut rusb::DeviceHandle<T>, sn: &str) -> Vec<u8> {
+fn claiming_interfaces<T: rusb::UsbContext>(config_descriptor: &rusb::ConfigDescriptor, handler: &mut rusb::DeviceHandle<T>, sn: &str) -> Vec<u8> {
 	//println!("\nFinding interfaces...");
 
 	let mut available_endpoints: Vec<u8> = vec![];
