@@ -13,11 +13,9 @@ impl <T: 'static +  rusb::UsbContext> DeviceReceiver<T> {
 		}
 	}
 
-	pub fn add_device(&mut self, device: rusb::Device<T>) {
-		let handler = device.open().unwrap();
-		let descriptor = device.device_descriptor().unwrap();
+	pub fn add_device(&mut self, device: rusb::Device<T>) -> Result<(), rusb::Error> {
 
-		let serial_number = handler.read_serial_number_string_ascii(&descriptor).unwrap();
+		let serial_number = create_device_id(&device)?;
 
 		let (devices_to_try, start_thread) = match self.serial_numbers.get(&serial_number) {
 			Some(devices) => {
@@ -25,14 +23,14 @@ impl <T: 'static +  rusb::UsbContext> DeviceReceiver<T> {
 				(devices.clone(), false)
 			},
 			None => {
-				let devices = Arc::new(Mutex::new(vec!()));
+				let devices = Arc::new(Mutex::new(vec!(device)));
 				self.serial_numbers.insert(serial_number.clone(), devices.clone());
 				(devices, true)
 			}
 		};
 
 		if !start_thread {
-			return;
+			return Ok(());
 		}
 
 		std::thread::spawn(move || {
@@ -47,9 +45,21 @@ impl <T: 'static +  rusb::UsbContext> DeviceReceiver<T> {
 				}
 			}
 		});
+
+		Ok(())
 	}
 }
 
+fn create_device_id<T: 'static +  rusb::UsbContext>(device: &rusb::Device<T>) -> rusb::Result<String> {
+	let descriptor = device.device_descriptor()?;
+
+	Ok(format!("{:03}:{:03}:{:04x}:{:04x}",
+		device.bus_number(),
+		device.address(),
+		descriptor.vendor_id(),
+		descriptor.product_id(),
+	))
+}
 
 fn device_setup<T: rusb::UsbContext>(device: rusb::Device<T>, sn: String) -> rusb::Result<()> {
 	let device_desc = device.device_descriptor()?;
@@ -77,9 +87,11 @@ fn device_setup<T: rusb::UsbContext>(device: rusb::Device<T>, sn: String) -> rus
 
 	println!("{} - Current active config: {:?}", sn, active_config);
 
-	if let Ok(1) = active_config {
-		std::thread::sleep(std::time::Duration::new(1, 0));
-		println!("{} - Set active config to 1: {:?}", sn, handler.set_active_configuration(1));
+	if let Ok(config) = active_config {
+		if config == 1 {
+			std::thread::sleep(std::time::Duration::new(1, 0));
+			println!("{} - Set active config to 1: {:?}", sn, handler.set_active_configuration(1));
+		}
 	}
 
 	let endpoint = match claiming_interfaces(&config_descriptor, &mut handler, &sn).get(0) {
@@ -232,7 +244,7 @@ fn create_virtual_input_device<T: rusb::UsbContext>(_usb_device: &rusb::Device<T
 	let now = std::time::SystemTime::now();
 	let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap();
 
-	device.set_name(&*format!("Tablet Touch Display: {} t:{:?} ", sn, since_epoch.as_millis()));
+	device.set_name(&*format!("Tablet Monitor: {} t:{:?} ", sn, since_epoch.as_millis()));
 	device.set_bustype(0x3);
 	device.set_vendor_id(device_desc.vendor_id().try_into().unwrap());
 	device.set_product_id(device_desc.product_id().try_into().unwrap());

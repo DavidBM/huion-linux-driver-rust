@@ -9,11 +9,12 @@ fn main() {
 
 	let device_receiver = Arc::new(Mutex::new(DeviceReceiver::new()));
 
+	println!("Finding already connected devices...");
+	start_current_plugged_devices(&mut device_receiver.lock().unwrap(), &context);
+	
 	let usb_listener = USBListener::new(device_receiver.clone());
 
 	let _ = context.register_callback(Some(0x256c), Some(0x006e), None, Box::new(usb_listener));
-
-	start_current_plugged_devices(&mut device_receiver.lock().unwrap(), &context);
 
 	loop {
 		context.handle_events(None).unwrap();
@@ -28,9 +29,11 @@ fn start_current_plugged_devices (receiver: &mut DeviceReceiver<rusb::Context>, 
 	.filter(is_device_huion_tablet)
 	.collect();
 
+	println!("Found {} devices", matched_devices.len());
+
 	while let Some(device) = matched_devices.pop() {
-		if is_device_huion_tablet(&device) {
-			receiver.add_device(device);
+		if let Err(error) = receiver.add_device(device) {
+			println!("Error adding present device: {:?}", error);
 		}
 	}
 }
@@ -53,7 +56,9 @@ impl <T: 'static +  rusb::UsbContext> rusb::Hotplug<T> for USBListener<T> {
 			return;
 		}
 
-		self.device_handler.lock().unwrap().add_device(device);
+		if let Err(error) = self.device_handler.lock().unwrap().add_device(device) {
+			println!("Error adding plugged device: {:?}", error);
+		}
 	}
 
 	fn device_left(&mut self, _device: rusb::Device<T>) {
