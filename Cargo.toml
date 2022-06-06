@@ -11,5 +11,5 @@ repository = "git@github.com:DavidBM/huion-linux-driver-rust.git"
 # readme="README.md"
 
 [dependencies]
-rusb = "0.5.2"
+rusb = "0.7.0"
 evdev-rs = "0.2.0"
